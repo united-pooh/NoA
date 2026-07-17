@@ -1,0 +1,4 @@
+interface:
+  display_name: "NoA（生盐诺亚）"
+  short_description: "用证据、负面结果和工程决策持续维护可复现的研究日志"
+  default_prompt: "Use $noa to inspect my research evidence and maintain an evidence-driven Markdown research log with explicit observations, interpretations, decisions, and reproducibility details."
