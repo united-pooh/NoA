@@ -158,4 +158,3 @@ For file mutations:
 6. Report the file changed, the entry added or updated, and any `[待补]` information.
 
 For chat-only drafts, output the finished Markdown entry first. Keep commentary outside the entry brief.
-
