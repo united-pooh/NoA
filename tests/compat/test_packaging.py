@@ -79,6 +79,7 @@ _EXPECTED_SDIST_FILES = {
     "tests/compat/test_knowledge_tools.py",
     "tests/compat/test_server.py",
     "tests/compat/test_trajectory_guard_tools.py",
+    "tests/compat/test_trajectory_acceptance.py",
     "tests/compat/test_trajectory_tools.py",
     "tests/domain/test_entities.py",
     "tests/domain/test_errors.py",

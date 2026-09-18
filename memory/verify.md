@@ -40,6 +40,16 @@
 - `git diff --check` — PASS.
 - README, SKILL, package README, and `agents/openai.yaml` now map legacy evidence/decision/next-step records to MCP trajectory events. Markdown is import/export only; the MCP kernel is the active runtime authority; incomplete legacy runs remain `legacy_unknown` without synthetic timestamps, parents, branches, or completion evidence. The package allowlist includes the trajectory modules and tests, and no budget ledger was added.
 
+## M7 JoyAI/SCNet trajectory acceptance (2026-09-19)
+
+- `UV_CACHE_DIR=/private/tmp/noa-uv-cache .venv/bin/pytest tests/test_trajectory.py tests/compat/test_runtime.py tests/compat/test_trajectory_tools.py tests/test_trajectory_store.py tests/test_trajectory_runtime.py tests/test_trajectory_guard.py tests/compat/test_trajectory_guard_tools.py tests/compat/test_trajectory_acceptance.py -q` — PASS (37 tests).
+- `UV_CACHE_DIR=/private/tmp/noa-uv-cache .venv/bin/pytest -q` — **799 passed, 1 failed**. The only failure is the reproducible-build test; direct `uv build --out-dir /private/tmp/noa-m7-dist` again cannot fetch pinned `hatchling==1.32.0` from PyPI (`Operation not permitted`), so this is an environment blocker rather than a code failure.
+- `UV_CACHE_DIR=/private/tmp/noa-uv-cache .venv/bin/pytest tests/test_package_metadata.py tests/compat/test_packaging.py -k 'not built_distributions_are_reproducible_and_publishable' -q` — PASS (5 tests).
+- `UV_CACHE_DIR=/private/tmp/noa-uv-cache .venv/bin/ruff check .` — PASS.
+- `UV_CACHE_DIR=/private/tmp/noa-uv-cache .venv/bin/ruff format --check .` — PASS.
+- `UV_CACHE_DIR=/private/tmp/noa-uv-cache .venv/bin/mypy src` — PASS (30 source files).
+- The JoyAI/SCNet acceptance path verifies HCU pilot context, prerequisite release and return-to-capability gate, Stage A writer evidence, partial snapshot blocker, complete index, Language Stage B, formal event/background evaluation, root/prerequisite progress separation, wall-clock replay, path distance, blocker clearing, completion, and restart-identical snapshot/trajectory replay. No budget ledger was introduced.
+
 ## 笔记查询链路打通（2026-08-24）
 
 TDD 新增 3 项回归（`test_note_attachments_survive_round_trip_and_project`、`test_get_note_returns_attachments_with_kinds`、`test_export_graph_view_writes_readable_json`）：
