@@ -37,6 +37,9 @@ from .trajectory import (
     evaluate_progress,
     validate_history,
 )
+from .trajectory import (
+    complete_objective as complete_trajectory_objective,
+)
 
 
 class TrajectoryStoreError(Exception):
@@ -73,6 +76,16 @@ CREATE TABLE IF NOT EXISTS trajectory_events (
 );
 CREATE INDEX IF NOT EXISTS idx_trajectory_events_run
     ON trajectory_events(objective_id, run_id, seq);
+CREATE TABLE IF NOT EXISTS trajectory_runs (
+    objective_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    branch_id TEXT NOT NULL,
+    parent_run_id TEXT,
+    parent_event_id TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (objective_id, run_id)
+);
 CREATE TABLE IF NOT EXISTS trajectory_snapshots (
     objective_id TEXT NOT NULL,
     run_id TEXT NOT NULL,
@@ -419,6 +432,54 @@ class TrajectoryStore:
             ) from exc
         return objective
 
+    def revise_objective(
+        self,
+        objective_id: str,
+        base_version: int,
+        objective: ResearchObjective,
+    ) -> ResearchObjective:
+        """Create an immutable objective version after an explicit revision."""
+        current = self.load_objective(objective_id)
+        if current.version != base_version:
+            raise _error(
+                "version_conflict",
+                "base objective version is stale",
+                expected_version=str(current.version),
+                actual_version=str(base_version),
+            )
+        if objective.objective_id != objective_id:
+            raise _error("objective_mismatch", "revised objective ID does not match")
+        if objective.version <= base_version:
+            raise _error("invalid_version", "revised objective version must increase")
+        if objective.supersedes_version != base_version:
+            raise _error("invalid_version", "revised objective must supersede base version")
+        return self.create_objective(objective)
+
+    def complete_objective(
+        self,
+        objective_id: str,
+        version: int,
+        evidence_event_ids: Sequence[str],
+    ) -> ResearchObjective:
+        """Transition one active objective version to completed after replay."""
+        objective = self.load_objective(objective_id, version)
+        events = self.load_events(objective_id)
+        completed = complete_trajectory_objective(
+            objective,
+            events,
+            completed_at=events[-1].occurred_at if events else None,
+        )
+        expected = tuple(str(item) for item in evidence_event_ids)
+        if expected and set(expected) != set(completed.completion_evidence_event_ids):
+            raise _error("invalid_completion_evidence", "evidence IDs do not match replayed proof")
+        payload = _objective_to_json(completed)
+        self._connection.execute(
+            "UPDATE research_objectives SET status = ?, objective_json = ? "
+            "WHERE objective_id = ? AND version = ?",
+            (completed.status.value, payload, objective_id, version),
+        )
+        return completed
+
     def load_objective(self, objective_id: str, version: int | None = None) -> ResearchObjective:
         query = (
             "SELECT objective_json FROM research_objectives WHERE objective_id = ?"
@@ -450,6 +511,34 @@ class TrajectoryStore:
                 (objective_id,),
             ).fetchall()
         return tuple(_objective_from_json(str(row[0])) for row in rows)
+
+    def register_run(
+        self,
+        objective_id: str,
+        run_id: str,
+        *,
+        branch_id: str = "main",
+        parent_run_id: str | None = None,
+        parent_event_id: str | None = None,
+    ) -> None:
+        """Persist run metadata without inventing a trajectory event."""
+
+        self.load_objective(objective_id)
+        try:
+            self._connection.execute(
+                "INSERT INTO trajectory_runs(objective_id,run_id,branch_id,parent_run_id,"
+                "parent_event_id,status,created_at) VALUES(?,?,?,?,?,'active',?)",
+                (
+                    objective_id,
+                    run_id,
+                    branch_id,
+                    parent_run_id,
+                    parent_event_id,
+                    _now(),
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise _error("duplicate_run", "trajectory run already exists", run_id=run_id) from exc
 
     def append_event(
         self,
@@ -592,7 +681,8 @@ class TrajectoryStore:
         dependency_context: Mapping[str, object] | None = None,
     ) -> TrajectorySnapshot:
         objective = self.load_objective(objective_id)
-        events = self.load_events(objective_id)
+        all_events = self.load_events(objective_id)
+        events = _events_for_path(all_events, run_id)
         progress = evaluate_progress(objective, events)
         drift = evaluate_drift(objective, events, path_context, dependency_context or {})
         snapshot = TrajectorySnapshot(
@@ -741,6 +831,23 @@ class TrajectoryStore:
                 )
             ),
         )
+
+
+def _events_for_path(events: Sequence[TrajectoryEvent], run_id: str) -> tuple[TrajectoryEvent, ...]:
+    """Select the current run and its persisted ancestor chain only."""
+
+    by_id = {event.event_id: event for event in events}
+    selected: set[str] = set()
+    for event in events:
+        if event.run_id != run_id:
+            continue
+        current: TrajectoryEvent | None = event
+        while current is not None and current.event_id not in selected:
+            selected.add(current.event_id)
+            current = (
+                None if current.parent_event_id is None else by_id.get(current.parent_event_id)
+            )
+    return tuple(event for event in events if event.event_id in selected)
 
 
 def _elapsed_ms(events: Sequence[TrajectoryEvent], run_id: str | None) -> int | None:

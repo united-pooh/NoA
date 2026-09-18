@@ -64,6 +64,21 @@ from noa.domain import (
 from noa.review import CandidateKind, CandidateStore, validate_candidate_payload
 from noa.runtime import ResearchRunStore, RunStage
 from noa.storage import GraphStore, ObjectStore, StorageError
+from noa.trajectory import (
+    BranchContext,
+    CriterionRole,
+    EvidenceScope,
+    EvidenceStatus,
+    ObjectiveFacet,
+    ObjectiveStatus,
+    ResearchObjective,
+    SuccessCriterion,
+    TrajectoryEvent,
+    TrajectoryIntent,
+    WorkClass,
+    WorkSource,
+)
+from noa.trajectory_store import TrajectoryStore
 from noa.views import NoteStore, SearchIndex, export_projection_view
 from noa.workspace import Workspace, WorkspaceError
 
@@ -747,26 +762,707 @@ def _claim_payload(claim: Claim) -> dict[str, object]:
     }
 
 
+def _trajectory_store_path(workspace_root: str) -> Path:
+    path = Path(workspace_root) / ".noa" / "control" / "trajectory.sqlite3"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _trajectory_parse_instant(value: str | None) -> UtcInstant:
+    if value is None or not isinstance(value, str) or not value.strip():
+        return UtcInstant.from_datetime(datetime.now(UTC))
+    try:
+        return UtcInstant.from_datetime(datetime.fromisoformat(value.replace("Z", "+00:00")))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid instant {value!r}") from exc
+
+
+def _trajectory_enum(value: object, enum_type: type) -> object:
+    if isinstance(value, enum_type):
+        return value
+    return enum_type(str(value))
+
+
+def _trajectory_facets(values: list[dict[str, object]] | None) -> tuple[ObjectiveFacet, ...]:
+    return tuple(
+        ObjectiveFacet(
+            kind=str(item["kind"]),
+            value=str(item["value"]),
+            weight=float(cast(float | int | str, item.get("weight", 1.0))),
+        )
+        for item in (values or [])
+    )
+
+
+def _trajectory_criteria(
+    values: list[dict[str, object]],
+) -> tuple[SuccessCriterion, ...]:
+    criteria: list[SuccessCriterion] = []
+    for item in values:
+        criteria.append(
+            SuccessCriterion(
+                criterion_id=str(item["criterion_id"]),
+                metric=str(item["metric"]),
+                target=str(item["target"]),
+                role=cast(CriterionRole, _trajectory_enum(item["role"], CriterionRole)),
+                depends_on=tuple(
+                    str(value)
+                    for value in cast(list[object] | tuple[object, ...], item.get("depends_on", ()))
+                ),
+                blocking=bool(item.get("blocking", True)),
+                acceptance_scope=cast(
+                    EvidenceScope,
+                    _trajectory_enum(
+                        item.get("acceptance_scope", EvidenceScope.FORMAL_EVALUATION.value),
+                        EvidenceScope,
+                    ),
+                ),
+            )
+        )
+    return tuple(criteria)
+
+
+def _trajectory_objective(
+    *,
+    objective_id: str,
+    version: int,
+    statement: str,
+    criteria: list[dict[str, object]],
+    facets: list[dict[str, object]] | None = None,
+    supersedes_version: int | None = None,
+) -> ResearchObjective:
+    return ResearchObjective(
+        objective_id=objective_id,
+        version=version,
+        statement=statement,
+        facets=_trajectory_facets(facets),
+        criteria=_trajectory_criteria(criteria),
+        supersedes_version=supersedes_version,
+    )
+
+
+def _trajectory_error(error: Exception, default_type: str) -> dict[str, object]:
+    code = str(getattr(error, "code", default_type))
+    message = str(error)
+    return {
+        "status": "error",
+        "type": code,
+        "code": code,
+        "message": message,
+        "detail": message,
+        "retryable": code in {"sequence_conflict", "version_conflict"},
+        "suggestion": (
+            "refresh the current trajectory snapshot and retry"
+            if code in {"sequence_conflict", "version_conflict"}
+            else "inspect the objective and trajectory event contract"
+        ),
+    }
+
+
+def _trajectory_intent(value: dict[str, object] | None) -> TrajectoryIntent | None:
+    if value is None:
+        return None
+    return TrajectoryIntent(
+        hypothesis_ids=tuple(
+            str(item)
+            for item in cast(list[object] | tuple[object, ...], value.get("hypothesis_ids", ()))
+        ),
+        criterion_ids=tuple(
+            str(item)
+            for item in cast(list[object] | tuple[object, ...], value.get("criterion_ids", ()))
+        ),
+        facets=_trajectory_facets(cast(list[dict[str, object]], value.get("facets", []))),
+        action=str(value["action"]),
+        work_class=cast(
+            WorkClass,
+            _trajectory_enum(value.get("work_class", WorkClass.EXPLORATION.value), WorkClass),
+        ),
+        work_source=cast(
+            WorkSource,
+            _trajectory_enum(value.get("work_source", WorkSource.HYPOTHESIS.value), WorkSource),
+        ),
+        blocks_criterion_ids=tuple(
+            str(item)
+            for item in cast(
+                list[object] | tuple[object, ...], value.get("blocks_criterion_ids", ())
+            )
+        ),
+        returns_to_criterion_ids=tuple(
+            str(item)
+            for item in cast(
+                list[object] | tuple[object, ...], value.get("returns_to_criterion_ids", ())
+            )
+        ),
+        exit_conditions=tuple(
+            str(item)
+            for item in cast(list[object] | tuple[object, ...], value.get("exit_conditions", ()))
+        ),
+        evidence_scope=cast(
+            EvidenceScope,
+            _trajectory_enum(value.get("evidence_scope", EvidenceScope.PILOT.value), EvidenceScope),
+        ),
+    )
+
+
+def _trajectory_event_json(event: TrajectoryEvent) -> dict[str, object]:
+    return {
+        "event_id": event.event_id,
+        "run_id": event.run_id,
+        "seq": event.seq,
+        "parent_event_id": event.parent_event_id,
+        "branch_id": event.branch_id,
+        "event_kind": event.event_kind,
+        "occurred_at": event.occurred_at.text,
+        "started_at": None if event.started_at is None else event.started_at.text,
+        "ended_at": None if event.ended_at is None else event.ended_at.text,
+        "intent": None
+        if event.intent is None
+        else {
+            "hypothesis_ids": list(event.intent.hypothesis_ids),
+            "criterion_ids": list(event.intent.criterion_ids),
+            "facets": [
+                {"kind": facet.kind, "value": facet.value, "weight": facet.weight}
+                for facet in event.intent.facets
+            ],
+            "action": event.intent.action,
+            "work_class": event.intent.work_class.value,
+            "work_source": event.intent.work_source.value,
+            "blocks_criterion_ids": list(event.intent.blocks_criterion_ids),
+            "returns_to_criterion_ids": list(event.intent.returns_to_criterion_ids),
+            "exit_conditions": list(event.intent.exit_conditions),
+            "evidence_scope": event.intent.evidence_scope.value,
+        },
+        "result": dict(event.result),
+        "metrics": dict(event.metrics),
+        "artifacts": list(event.artifacts),
+        "outcome": event.outcome,
+        "source": event.source,
+        "idempotency_key": event.idempotency_key,
+        "supports_criterion_ids": list(event.supports_criterion_ids),
+        "blocked_criterion_ids": list(event.blocked_criterion_ids),
+        "evidence_scope": event.evidence_scope.value,
+        "evidence_status": event.evidence_status.value,
+    }
+
+
+def _trajectory_branch_context(
+    events: tuple[TrajectoryEvent, ...],
+    run_id: str,
+) -> BranchContext:
+    run_events = tuple(event for event in events if event.run_id == run_id)
+    if not run_events:
+        return BranchContext(run_id, run_id, run_id, None, 0, 1, None)
+    first = run_events[0]
+    if first.parent_event_id is None:
+        return BranchContext(run_id, run_id, run_id, None, 0, first.seq, None)
+    parent = next(
+        (event for event in events if event.event_id == first.parent_event_id),
+        None,
+    )
+    if parent is None:
+        raise ValueError("parent event is missing from trajectory")
+    ancestor = _trajectory_branch_context(events, parent.run_id)
+    return BranchContext(
+        run_id=run_id,
+        root_run_id=ancestor.root_run_id,
+        mainline_run_id=ancestor.mainline_run_id,
+        parent_run_id=parent.run_id,
+        branch_depth=ancestor.branch_depth + 1,
+        fork_seq=parent.seq,
+        common_ancestor_seq=parent.seq,
+    )
+
+
+def _trajectory_snapshot_json(
+    objective: ResearchObjective,
+    snapshot: object,
+    events: tuple[TrajectoryEvent, ...],
+) -> dict[str, object]:
+    from noa.trajectory import TrajectorySnapshot
+
+    if not isinstance(snapshot, TrajectorySnapshot):
+        raise TypeError("snapshot must be a TrajectorySnapshot")
+    context = _trajectory_branch_context(events, snapshot.run_id)
+    branch_event = next(
+        (event for event in reversed(events) if event.run_id == snapshot.run_id), None
+    )
+    return {
+        "status": "pass",
+        "objective_id": objective.objective_id,
+        "objective_version": objective.version,
+        "objective_status": objective.status.value,
+        "branch_id": branch_event.branch_id if branch_event else "main",
+        "common_ancestor_seq": context.common_ancestor_seq,
+        "branch_elapsed_ms": snapshot.branch_elapsed_ms,
+        "path_elapsed_ms": snapshot.path_elapsed_ms,
+        "root_progress": snapshot.drift.root_progress,
+        "prerequisite_progress": snapshot.drift.prerequisite_progress,
+        "path_distance": snapshot.drift.path_distance,
+        "goal_drift": snapshot.drift.goal_drift,
+        "validation_stagnation_events": snapshot.drift.validation_stagnation_events,
+        "return_due": snapshot.drift.return_due,
+        "objective": {
+            "objective_id": objective.objective_id,
+            "version": objective.version,
+            "status": objective.status.value,
+            "statement": objective.statement,
+        },
+        "run_id": snapshot.run_id,
+        "stage": branch_event.event_kind if branch_event is not None else "prepared",
+        "branch": {
+            "branch_id": branch_event.branch_id if branch_event else "main",
+            "run_id": context.run_id,
+            "root_run_id": context.root_run_id,
+            "mainline_run_id": context.mainline_run_id,
+            "parent_run_id": context.parent_run_id,
+            "branch_depth": context.branch_depth,
+            "common_ancestor_seq": context.common_ancestor_seq,
+        },
+        "elapsed": {
+            "branch_ms": snapshot.branch_elapsed_ms,
+            "path_ms": snapshot.path_elapsed_ms,
+            "duration_source": snapshot.duration_source,
+        },
+        "progress": {
+            "verified_criterion_ids": list(snapshot.progress.verified_criterion_ids),
+            "pending_criterion_ids": list(snapshot.progress.pending_criterion_ids),
+            "fraction": snapshot.progress.fraction,
+            "root_criterion_ids": list(snapshot.progress.root_criterion_ids),
+            "prerequisite_criterion_ids": list(snapshot.progress.prerequisite_criterion_ids),
+            "evidence_status_by_criterion": dict(snapshot.progress.evidence_status_by_criterion),
+        },
+        "drift": {
+            "path_distance": snapshot.drift.path_distance,
+            "goal_drift": snapshot.drift.goal_drift,
+            "score": snapshot.drift.score,
+            "root_progress": snapshot.drift.root_progress,
+            "prerequisite_progress": snapshot.drift.prerequisite_progress,
+            "validation_stagnation": snapshot.drift.validation_stagnation_events,
+            "return_due": snapshot.drift.return_due,
+            "basis_event_ids": list(snapshot.drift.basis_event_ids),
+            "reasons": list(snapshot.drift.reasons),
+        },
+        "active_blockers": list(snapshot.active_blockers),
+        "last_capability_evidence_seq": snapshot.last_capability_evidence_seq,
+        "last_prerequisite_release_seq": snapshot.last_prerequisite_release_seq,
+        "next_action": snapshot.next_action,
+    }
+
+
 @mcp.tool()
 def start_research_run(
     workspace_root: str,
     run_id: str,
-    total_steps: int,
+    total_steps: int = 1,
     max_sampling_requests: int = 16,
+    objective_id: str | None = None,
+    branch_id: str = "main",
 ) -> dict[str, object]:
     """Start a resumable research run on the control plane."""
     try:
+        if objective_id is not None:
+            trajectory_store = TrajectoryStore(_trajectory_store_path(workspace_root))
+            try:
+                objective = trajectory_store.load_objective(objective_id)
+                if objective.status in {ObjectiveStatus.COMPLETED, ObjectiveStatus.SUPERSEDED}:
+                    return _trajectory_error(
+                        ValueError("terminal objective cannot start a new run"),
+                        "objective_terminal",
+                    )
+                trajectory_store.register_run(objective_id, run_id, branch_id=branch_id)
+                return {
+                    "status": "pass",
+                    "run_id": run_id,
+                    "objective_id": objective.objective_id,
+                    "objective_version": objective.version,
+                    "branch_id": branch_id,
+                    "trajectory_status": "active",
+                }
+            finally:
+                trajectory_store.close()
         Workspace.open(Path(workspace_root), create=False)
-        store = ResearchRunStore(Path(workspace_root) / ".noa" / "control" / "runs.sqlite3")
+        run_store = ResearchRunStore(Path(workspace_root) / ".noa" / "control" / "runs.sqlite3")
         try:
-            run = store.start_run(
+            run = run_store.start_run(
                 run_id, total_steps=total_steps, max_sampling_requests=max_sampling_requests
             )
             return {"status": "pass", "run_id": run.run_id, "stage": run.stage.value}
         finally:
+            run_store.close()
+    except Exception as error:
+        return _trajectory_error(error, "start_run_failed")
+
+
+@mcp.tool()
+def create_research_objective(
+    workspace_root: str,
+    objective_id: str,
+    statement: str,
+    criteria: list[dict[str, object]],
+    facets: list[dict[str, object]] | None = None,
+    version: int = 1,
+) -> dict[str, object]:
+    """Create a versioned research objective in the trajectory control plane."""
+    try:
+        objective = _trajectory_objective(
+            objective_id=objective_id,
+            version=version,
+            statement=statement,
+            criteria=criteria,
+            facets=facets,
+        )
+        store = TrajectoryStore(_trajectory_store_path(workspace_root))
+        try:
+            store.create_objective(objective)
+        finally:
+            store.close()
+        return {
+            "status": "pass",
+            "objective_id": objective.objective_id,
+            "version": objective.version,
+            "objective_status": objective.status.value,
+        }
+    except Exception as error:
+        return _trajectory_error(error, "create_objective_failed")
+
+
+@mcp.tool()
+def revise_research_objective(
+    workspace_root: str,
+    objective_id: str,
+    base_version: int,
+    statement: str,
+    criteria: list[dict[str, object]],
+    facets: list[dict[str, object]] | None = None,
+    version: int | None = None,
+) -> dict[str, object]:
+    """Create a new objective version while preserving the old immutable version."""
+    try:
+        store = TrajectoryStore(_trajectory_store_path(workspace_root))
+        try:
+            new_version = base_version + 1 if version is None else version
+            objective = _trajectory_objective(
+                objective_id=objective_id,
+                version=new_version,
+                statement=statement,
+                criteria=criteria,
+                facets=facets,
+                supersedes_version=base_version,
+            )
+            store.revise_objective(objective_id, base_version, objective)
+        finally:
+            store.close()
+        return {
+            "status": "pass",
+            "objective_id": objective.objective_id,
+            "version": objective.version,
+            "supersedes_version": objective.supersedes_version,
+            "objective_status": objective.status.value,
+        }
+    except Exception as error:
+        return _trajectory_error(error, "revise_objective_failed")
+
+
+@mcp.tool()
+def complete_research_objective(
+    workspace_root: str,
+    objective_id: str,
+    evidence_event_ids: list[str],
+    version: int | None = None,
+) -> dict[str, object]:
+    """Complete an objective only after replay verifies every root criterion."""
+    try:
+        store = TrajectoryStore(_trajectory_store_path(workspace_root))
+        try:
+            objective = store.load_objective(objective_id, version)
+            completed = store.complete_objective(
+                objective_id,
+                objective.version,
+                tuple(evidence_event_ids),
+            )
+        finally:
+            store.close()
+        return {
+            "status": "pass",
+            "objective_id": completed.objective_id,
+            "version": completed.version,
+            "objective_status": completed.status.value,
+            "completed_at": completed.completed_at.text if completed.completed_at else None,
+            "completion_evidence_event_ids": list(completed.completion_evidence_event_ids),
+        }
+    except Exception as error:
+        return _trajectory_error(error, "complete_objective_failed")
+
+
+@mcp.tool()
+def append_trajectory_event(
+    workspace_root: str,
+    objective_id: str,
+    run_id: str,
+    event_id: str,
+    event_kind: str,
+    idempotency_key: str,
+    branch_id: str = "main",
+    seq: int | None = None,
+    parent_event_id: str | None = None,
+    occurred_at: str | None = None,
+    started_at: str | None = None,
+    ended_at: str | None = None,
+    intent: dict[str, object] | None = None,
+    result: dict[str, object] | None = None,
+    metrics: dict[str, object] | None = None,
+    artifacts: list[str] | None = None,
+    outcome: str = "observed",
+    source: str = "runner",
+    supports_criterion_ids: list[str] | None = None,
+    blocked_criterion_ids: list[str] | None = None,
+    evidence_scope: str = EvidenceScope.PILOT.value,
+    evidence_status: str = EvidenceStatus.OBSERVED.value,
+    expected_seq: int | None = None,
+) -> dict[str, object]:
+    """Append one immutable runner event with idempotency and sequence checks."""
+    try:
+        store = TrajectoryStore(_trajectory_store_path(workspace_root))
+        try:
+            objective = store.load_objective(objective_id)
+            history = store.load_events(objective_id)
+            run_events = tuple(event for event in history if event.run_id == run_id)
+            actual_seq = max((event.seq for event in run_events), default=0)
+            event_seq = actual_seq + 1 if seq is None else seq
+            parent = parent_event_id
+            if parent is None and run_events:
+                parent = max(run_events, key=lambda event: event.seq).event_id
+            parsed_scope = cast(EvidenceScope, _trajectory_enum(evidence_scope, EvidenceScope))
+            parsed_status = cast(EvidenceStatus, _trajectory_enum(evidence_status, EvidenceStatus))
+            if parsed_status is EvidenceStatus.VERIFIED:
+                criteria_by_id = objective.criteria_by_id
+                for criterion_id in supports_criterion_ids or []:
+                    criterion = criteria_by_id.get(criterion_id)
+                    if criterion is not None and parsed_scope is not criterion.acceptance_scope:
+                        parsed_status = EvidenceStatus.INSUFFICIENT
+                        break
+            event = TrajectoryEvent(
+                event_id=event_id,
+                run_id=run_id,
+                seq=event_seq,
+                parent_event_id=parent,
+                branch_id=branch_id,
+                event_kind=event_kind,
+                occurred_at=_trajectory_parse_instant(occurred_at),
+                started_at=None if started_at is None else _trajectory_parse_instant(started_at),
+                ended_at=None if ended_at is None else _trajectory_parse_instant(ended_at),
+                intent=_trajectory_intent(intent),
+                result={} if result is None else result,
+                metrics={} if metrics is None else metrics,
+                artifacts=tuple(artifacts or ()),
+                outcome=outcome,
+                source=source,
+                idempotency_key=idempotency_key,
+                supports_criterion_ids=tuple(supports_criterion_ids or ()),
+                blocked_criterion_ids=tuple(blocked_criterion_ids or ()),
+                evidence_scope=parsed_scope,
+                evidence_status=parsed_status,
+            )
+            persisted = store.append_event(objective_id, event, expected_seq=expected_seq)
+        finally:
+            store.close()
+        return {"status": "pass", "event": _trajectory_event_json(persisted)}
+    except Exception as error:
+        return _trajectory_error(error, "append_trajectory_event_failed")
+
+
+@mcp.tool()
+def fork_research_path(
+    workspace_root: str,
+    objective_id: str,
+    parent_run_id: str,
+    parent_event_id: str,
+    child_run_id: str,
+    branch_id: str,
+    idempotency_key: str | None = None,
+) -> dict[str, object]:
+    """Fork a child path from a persisted checkpoint."""
+    try:
+        store = TrajectoryStore(_trajectory_store_path(workspace_root))
+        try:
+            objective = store.load_objective(objective_id)
+            history = store.load_events(objective_id)
+            parent = next(
+                (
+                    event
+                    for event in history
+                    if event.event_id == parent_event_id and event.run_id == parent_run_id
+                ),
+                None,
+            )
+            if parent is None:
+                raise ValueError("parent event does not belong to parent run")
+            if any(event.run_id == child_run_id for event in history):
+                raise ValueError("child run already exists")
+            store.register_run(
+                objective_id,
+                child_run_id,
+                branch_id=branch_id,
+                parent_run_id=parent_run_id,
+                parent_event_id=parent_event_id,
+            )
+            event = TrajectoryEvent(
+                event_id=f"fork:{child_run_id}",
+                run_id=child_run_id,
+                seq=1,
+                parent_event_id=parent_event_id,
+                branch_id=branch_id,
+                event_kind="branch_forked",
+                occurred_at=parent.occurred_at,
+                started_at=None,
+                ended_at=None,
+                intent=None,
+                result={"parent_run_id": parent_run_id},
+                metrics={},
+                artifacts=(),
+                outcome="forked",
+                source="mcp",
+                idempotency_key=idempotency_key or f"fork:{child_run_id}",
+            )
+            persisted = store.append_event(objective.objective_id, event, expected_seq=0)
+        finally:
+            store.close()
+        return {
+            "status": "pass",
+            "run_id": child_run_id,
+            "parent_run_id": parent_run_id,
+            "parent_event_id": parent_event_id,
+            "branch_id": branch_id,
+            "event": _trajectory_event_json(persisted),
+        }
+    except Exception as error:
+        return _trajectory_error(error, "fork_research_path_failed")
+
+
+@mcp.tool()
+def get_research_snapshot(
+    workspace_root: str,
+    objective_id: str,
+    run_id: str,
+) -> dict[str, object]:
+    """Return a compact model-ready snapshot reconstructed from events."""
+    try:
+        store = TrajectoryStore(_trajectory_store_path(workspace_root))
+        try:
+            objective = store.load_objective(objective_id)
+            events = store.load_events(objective_id)
+            context = _trajectory_branch_context(events, run_id)
+            snapshot = store.replay_snapshot(
+                objective_id,
+                run_id=run_id,
+                path_context=context,
+                dependency_context={},
+            )
+            return _trajectory_snapshot_json(objective, snapshot, events)
+        finally:
             store.close()
     except Exception as error:
-        return _error_result(getattr(error, "code", "start_run_failed"), error.args[0])
+        return _trajectory_error(error, "get_snapshot_failed")
+
+
+@mcp.tool()
+def get_research_trajectory(
+    workspace_root: str,
+    objective_id: str,
+    run_id: str | None = None,
+    view: str = "events",
+    after_seq: int = 0,
+    limit: int = 100,
+) -> dict[str, object]:
+    """Read a replayable trajectory as events, a path, branches, or summary."""
+    try:
+        store = TrajectoryStore(_trajectory_store_path(workspace_root))
+        try:
+            objective = store.load_objective(objective_id)
+            events = store.load_events(objective_id)
+            if view not in {"summary", "path", "branches", "events"}:
+                raise ValueError("view must be summary, path, branches, or events")
+            if after_seq < 0:
+                raise ValueError("after_seq must be non-negative")
+            selected = tuple(
+                event
+                for event in events
+                if (run_id is None or event.run_id == run_id) and event.seq > after_seq
+            )[: max(1, min(limit, 1000))]
+            if view == "summary":
+                return {
+                    "status": "pass",
+                    "objective_id": objective.objective_id,
+                    "version": objective.version,
+                    "event_count": len(events),
+                    "run_ids": sorted({event.run_id for event in events}),
+                }
+            if view == "branches":
+                branches = {
+                    event.run_id: {
+                        "run_id": event.run_id,
+                        "branch_id": event.branch_id,
+                        "event_count": sum(item.run_id == event.run_id for item in events),
+                    }
+                    for event in events
+                }
+                return {"status": "pass", "branches": list(branches.values())}
+            if view == "path" and run_id is None:
+                raise ValueError("run_id is required for path view")
+            return {
+                "status": "pass",
+                "objective_id": objective.objective_id,
+                "run_id": run_id,
+                "view": view,
+                "after_seq": after_seq,
+                "events": [_trajectory_event_json(event) for event in selected],
+            }
+        finally:
+            store.close()
+    except Exception as error:
+        return _trajectory_error(error, "get_trajectory_failed")
+
+
+@mcp.tool()
+def pause_research_run(
+    workspace_root: str,
+    objective_id: str,
+    run_id: str,
+    event_id: str | None = None,
+) -> dict[str, object]:
+    """Record an explicit pause marker for a trajectory run."""
+    return append_trajectory_event(
+        workspace_root=workspace_root,
+        objective_id=objective_id,
+        run_id=run_id,
+        event_id=event_id or f"pause:{run_id}",
+        event_kind="run_paused",
+        idempotency_key=event_id or f"pause:{run_id}",
+        outcome="paused",
+        source="mcp",
+    )
+
+
+@mcp.tool()
+def abandon_research_branch(
+    workspace_root: str,
+    objective_id: str,
+    run_id: str,
+    event_id: str | None = None,
+    reason: str = "abandoned by operator",
+) -> dict[str, object]:
+    """Record an explicit branch abandonment marker."""
+    return append_trajectory_event(
+        workspace_root=workspace_root,
+        objective_id=objective_id,
+        run_id=run_id,
+        event_id=event_id or f"abandon:{run_id}",
+        event_kind="branch_abandoned",
+        idempotency_key=event_id or f"abandon:{run_id}",
+        result={"reason": reason},
+        outcome="abandoned",
+        source="mcp",
+    )
 
 
 @mcp.tool()

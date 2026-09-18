@@ -888,7 +888,11 @@ def evaluate_drift(
         reasons.append(f"root-capability validation stagnant for {stagnation} events")
 
     local_events = sum(event.run_id == path_context.run_id for event in events)
-    path_distance = float(path_context.branch_depth + local_events)
+    # Mainline work is the reference path; distance measures detour work after
+    # a fork and therefore remains zero while the root run advances.
+    path_distance = (
+        0.0 if path_context.branch_depth == 0 else float(path_context.branch_depth + local_events)
+    )
     branch_drift = min(1.0, path_distance / max(1.0, float(local_events + 1)))
     drift_components.append(branch_drift)
     goal_drift = sum(drift_components) / len(drift_components)

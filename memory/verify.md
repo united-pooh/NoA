@@ -15,6 +15,14 @@
 - `MYPYPATH=src .venv/bin/mypy src` — PASS (29 source files).
 - The trajectory store uses SQLite WAL, append-only event rows, idempotency and expected-sequence checks, hash-validated snapshots with replay, and additive `legacy_unknown` migration. No budget fields were added.
 
+## M4 trajectory MCP tools (2026-09-19)
+
+- `PYTHONPATH=src .venv/bin/pytest tests/test_trajectory.py tests/test_trajectory_store.py tests/test_trajectory_runtime.py tests/compat/test_trajectory_tools.py tests/compat/test_server.py -q` — PASS (28 tests).
+- `PYTHONPATH=src .venv/bin/pytest -q` — **793 passed, 1 failed**. The remaining failure is the existing `uv build` PyPI network restriction.
+- `.venv/bin/ruff check . && .venv/bin/ruff format --check .` — PASS.
+- `MYPYPATH=src .venv/bin/mypy src` — PASS (29 source files).
+- In-process MCP flow passes: create objective → start mainline → append event → fork → append child event → query snapshot/trajectory → close/reopen and obtain identical snapshot. No budgets were introduced.
+
 ## 笔记查询链路打通（2026-08-24）
 
 TDD 新增 3 项回归（`test_note_attachments_survive_round_trip_and_project`、`test_get_note_returns_attachments_with_kinds`、`test_export_graph_view_writes_readable_json`）：
