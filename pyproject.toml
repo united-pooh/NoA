@@ -1,0 +1,76 @@
+[build-system]
+requires = ["hatchling==1.32.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "noa-mcp"
+version = "0.1.0a0"
+description = "NoA literature graph MCP compatibility spike"
+readme = { file = "docs/package/README.md", content-type = "text/markdown" }
+requires-python = "==3.11.*"
+classifiers = ["Private :: Do Not Upload"]
+dependencies = [
+  "anyio==4.14.2",
+  "fastmcp==4.0.0b3",
+  "ladybug==0.19.1",
+  "mcp==2.0.0",
+  "packaging==26.3",
+  "pydantic==2.13.4",
+  "uuid6==2025.0.1",
+]
+
+[project.scripts]
+noa = "noa.server:run"
+noa-compat = "noa.compat.cli:main"
+
+[dependency-groups]
+dev = [
+  "build==1.5.0",
+  "mypy==2.3.1",
+  "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
+  "ruff==0.16.3",
+]
+
+[tool.uv]
+constraint-dependencies = ["fastmcp-slim==4.0.0b3"]
+
+[tool.hatch.build]
+ignore-vcs = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/noa"]
+
+[tool.hatch.build.targets.sdist]
+ignore-vcs = true
+include = [
+  "/.gitignore",
+  "/docs/package/README.md",
+  "/pyproject.toml",
+  "/src",
+  "/tests",
+  "/uv.lock",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+extend-exclude = ["docs/superpowers/plans", "docs/codex/plans"]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "RUF"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["noa"]
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = "ladybug"
+ignore_missing_imports = true

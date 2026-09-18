@@ -1,0 +1,67 @@
+# Progress
+
+- [x] 记录已明确的领域术语与产品边界 <!-- todo:domain-docs -->
+- [x] 完成 MCP 自治能力、安全边界、文献知识图谱与客户端兼容性的设计访谈 <!-- todo:grill -->
+- [x] Task 6：验证 LadybugDB 0.19.1 事务、持久化和 read-only 重开 <!-- todo:ladybug-probe -->
+- [x] Task 7：统一 checkpoint 主错误与清理异常优先级并补齐回归测试 <!-- todo:sqlite-checkpoint -->
+- [x] Task 8：同一 FastMCP tool 兼容 modern MRTR 与 legacy sampling/createMessage，并验证错误、取消和恢复 <!-- todo:sampling-compat -->
+- [x] Task 9 第二轮质量审阅：subprocess probe 终止、冷启动并发、报告 pair transaction/lock/path validation/cleanup priority <!-- todo:compat-runner -->
+  - [x] 审计中断工作树并确认 subprocess worker、真实 timeout 副作用测试和五进程冷并发已就位
+  - [x] 完成 JSON/Markdown fsync + flock pair commit、第二 replace 回滚和 cleanup 主错误优先级
+  - [x] 在任何文件系统副作用前拒绝解析后相同的报告路径，并让 CLI 返回清晰 usage error
+  - [x] 完成 targeted/full/runtime/static/lock verification matrix
+- [x] Task 10：验证 wheel/sdist、显式发布 allowlist、可复现构建、包元数据与 console scripts <!-- todo:packaging -->
+- [x] Task 11：严格验证 VS Code Stable schema v2 App/Sampling 双截图宿主证据 <!-- todo:vscode-host-evidence -->
+  - [x] 先迁移测试 fixture 并确认 schema v2、时效、双 PNG 完整性/尺寸/hash/bytes 测试失败
+  - [x] 最小实现 schema v2 双 artifact 校验与可审计 details
+  - [x] TDD 加固 PNG chunk type、reserved bit、PLTE 与 color-type 语义
+  - [x] 删除 Markdown 重复元数据并把 logical viewport 纳入唯一 validator manifest
+  - [x] TDD 增加 PNG 文件、像素与解码输出预算
+  - [x] TDD 拒绝 evidence_root 外路径及目标/组件 symlink
+  - [x] TDD 为 config/evidence/manifest 增加嵌套 duplicate-key 拒绝
+  - [x] 完成完整 pytest、Ruff、mypy、真实证据与 diff-check 验证
+- [x] Task 60：忽略 `.paw/` 与 `.playwright-cli/` 本地运行记录，并保持构建制品精确 allowlist <!-- todo:ignore-local-runtime-state -->
+  - [x] 质量审阅：用 `git check-ignore --quiet --no-index` 验证最终规则，增加后置 negation 失效证明并移除 packaged `.gitignore` 脆弱子串断言
+- [x] Task 12：完成 Slice 0 确定性完整验证并重新生成最新报告 <!-- todo:slice-0-final-verification -->
+  - [x] 验证 FastMCP 4 / MCP SDK v2 精确 pins
+  - [x] 验证 modern MRTR Sampling
+  - [x] 验证 legacy `sampling/createMessage`
+  - [x] 验证 LadybugDB 事务与持久化
+  - [x] 验证 SQLite checkpoint 恢复
+  - [x] 验证 MCP App 打包与 VS Code Stable
+  - [x] 完成 Slice 0 functional/host gate，最终 decision 为 `conditional_go`
+- [ ] Task #58：修正双截图语义并生产化 App HTML/语义审阅验证（按用户要求冻结，待成品后处理） <!-- todo:task-58-semantic-artifacts-app-validation -->
+  - [x] 生产 validator 与 schema v2 semantic review 基础实现
+  - [ ] CSS/CSP/可见 DOM 验证缺口与反向 PNG 留待 release gate
+- [x] Slice 2 Workspace & Security Kernel：`workspace.py`（`.noa/` 布局、path/symlink 逃逸拒绝、flock 单写者锁、NetworkPolicy、ResourceBudgets） <!-- todo:slice-2-workspace -->
+- [x] Slice 3 Persistence & Recovery：`storage.py`（CAS ObjectStore、Ladybug GraphStore 事务 upsert、SQLite operation journal 八阶段、幂等 recover_stores） <!-- todo:slice-3-persistence -->
+- [x] Slice 4 Collection & Source Adapters：`adapters.py`（CollectionPlan、速率受限分页、Crossref/OpenAlex payload→draft→单记录 batch proposal） <!-- todo:slice-4-adapters -->
+- [x] Slice 5 Acquisition & Parsing：`acquisition.py`（策略化 HTTPS 下载入 CAS、逐跳重校验、text/HTML/XML 抽取、PDF 显式 capability_unavailable、Evidence locator） <!-- todo:slice-5-acquisition -->
+- [x] Slice 6 Research Run & Sampling Runtime：`runtime.py`（可恢复 run 状态机、sampling 预算、`SamplingRuntime` 包装 compat 双协议 sampling） <!-- todo:slice-6-runtime -->
+- [x] Slice 7 Enrichment/Review/Audit：`review.py`（结构化候选验证、digest 绑定审批→confirm_*/merge、批量拒绝、supersede 失效、audit_events） <!-- todo:slice-7-review -->
+- [x] Slice 8 Search/Notes/Lineage/Views：`views.py`（确定性关键词检索、NoteStore 版本历史、lineage 视图遍历、structural projection JSON 导出） <!-- todo:slice-8-views -->
+- [x] Slice 9 MCP Tool Contract：`server.py` 扩展（knowledge_search、add_note、submit/approve candidate、start/advance run、acquire_and_stage；写工具强制 `confirm=True`，错误码结构化返回） <!-- todo:slice-9-tools -->
+- [ ] Slice 1 无专用回归测试文件（计划约束遗留债务）；Slice 2–9 同样仅 smoke 覆盖 <!-- todo:regression-test-debt -->
+- [ ] Release gate：FastMCP 稳定版 pin 后重跑完整 Slice 0；Task #58 validator 深度缺口 <!-- todo:release-gate -->
+- [ ] 全部工作尚未 git commit（src/tests/docs/memory 均为 untracked） <!-- todo:commit-checkpoint -->
+- [x] 冻结 Slice 1 Domain Graph and Provenance 规格 <!-- todo:slice-1-domain-graph-spec -->
+- [x] 生成生产优先的 Slice 1 实施计划 <!-- todo:slice-1-domain-graph-plan -->
+- [x] 实现 `DomainError`、23 类 UUIDv7 ID 与精确 uuid6 pin <!-- todo:slice-1-domain-foundation -->
+- [x] 实现值对象、attestation、binding 与 identifier normalization <!-- todo:slice-1-identifiers -->
+- [x] 实现 predicate registry、实体快照、生命周期与索引（106 实体测试转绿，ruff/mypy/import+tombstone smoke 全过） <!-- todo:slice-1-entities -->
+- [x] 修复发布门红项：test_app `ResourceCSP` 导入、test_packaging allowlist 收录 Slice 1 文件与 `uuid6` pin、test_runner details 期望同步（全量 755 绿） <!-- todo:release-gate-reds -->
+- [x] 实现 source batch、append-only provenance 与 retraction（origins/assertions/proposals/batch/`DomainProjectionInput`/human 构造器；PROVENANCE_SMOKE_OK） <!-- todo:slice-1-provenance -->
+- [x] 实现 Claim/SemanticRelation、merge、grounding 与 projections（confirm ×2、merge basis ×3 + merge_entities、fixed-point evaluator、structural/metadata/slot/owner/relationships 投影与双 grounding；§20 缩短场景 smoke TASK5_SMOKE_OK） <!-- todo:slice-1-projections -->
+- [x] 验证分层：拆分开发门/发布门，日常只跑开发门（见 memory/verify.md） <!-- todo:verify-tiering -->
+- [x] 完成 Slice 1 生产 smoke 与静态检查，不新增测试文件 <!-- todo:slice-1-production-verify -->
+- [x] 补齐 MCP 工具路径图持久化缺口：`put_entity_snapshot`（work/publication/document/evidence_passage，confirm 门禁 + 白名单 + 拒重复）、`list_id_prefixes`、`_snapshot_from_payload` 全量重建；修复审批跨层 digest 不一致（review.py 提取公共 `review_binding_digest`）；新增 `tests/compat/test_knowledge_tools.py` 12 项回归（全量 767 绿） <!-- todo:mcp-graph-persistence-gap -->
+  - [ ] 已知边界：assertion/source_record/projection 尚未入图；acquire_and_stage 仍止于 staging；其余实体 kind（person 等）不可经 MCP 入图
+- [x] Claim 审批后真实落图（payload 含 review attestation 全字段，重建时重算 binding digest 防篡改）；修复重建路径 `NameError: Claim` 被静默吞掉的缺陷；全量 768 绿 <!-- todo:mcp-graph-persistence-gap -->
+- [x] 打通笔记查询链路：add_note 落图补存 attached_entity_ids + revision、Note 快照可重建并投影 note_attached_to 边；新增只读工具 `get_note`（按 ID 取笔记+挂接实体 kind）与 `export_graph_view`（结构投影 JSON 导出到 `.noa/exports/graph-view.json`）；全量 771 绿 <!-- todo:mcp-note-query-chain -->
+  - [ ] 已知边界：add_note 的图内 payload 未存 attached_entity_ids 的旧数据不兼容（需重新写入）；get_note 暂不含挂接实体的详细 payload（如 evidence 原文）
+- [x] 复现 OpenRouter 请求并检查完整响应结构与 HTTP 状态 <!-- todo:reproduce -->
+- [x] 核对 stealth/ox-alpha 的模型状态、能力和 reasoning 返回约定 <!-- todo:research -->
+- [x] 定位无内容原因并给出可验证的修正请求 <!-- todo:diagnose -->
+- [x] 检查项目约定、模型接入入口、流式解析和输出展示链路 <!-- todo:map -->
+- [x] 结合代码与原始响应定位根因，区分上游、协议和客户端解析问题 <!-- todo:root-cause -->
+- [x] 实现最小修复并运行针对性测试与项目检查 <!-- todo:fix-verify -->

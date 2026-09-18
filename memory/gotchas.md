@@ -1,0 +1,28 @@
+# Gotchas
+
+- Ladybug compatibility probe 不得在 root 下使用固定数据库文件名：同一 root 再次运行会因已有 schema 产生假 FAIL。每次运行必须生成唯一数据库文件，且不得删除 root 内既有文件。
+- 资源清理不得依赖单个 `close()` 全部成功：必须逆序逐一尝试所有 QueryResult、Connection 和 Database，清理错误单独记录且不得覆盖执行阶段的主错误。
+- Ladybug phase 清理必须位于 `finally`，不能因 KeyboardInterrupt、SystemExit 或 GeneratorExit 跳过；close 期间的首个非 Exception 中断要在全部资源尝试关闭后继续传播。
+- 单资源 cleanup 的错误优先级必须统一：已有 KeyboardInterrupt/SystemExit/GeneratorExit 主中断优先于后续任何 cleanup；普通主 Exception 仅可被 cleanup 的非 Exception 中断取代；普通 cleanup Exception 不覆盖主错误；无主错误时 cleanup error 正常传播。构造失败、context manager 和 probe 必须共用同一策略，不能各写一套。
+- FastMCP 4.0.0b3 的 client sampling `RequestContext` 公开名只是 typing shim，实际 handler context 没有 `protocol_version`；测试协商版本要读取已连接 `Client.protocol_version`，不能依赖 handler context 属性。
+- MCP 2.0.0 的 standalone Sampling 弃用告警是 `mcp.MCPDeprecationWarning(UserWarning)`，不是 `DeprecationWarning` 子类；只在 legacy `ctx.session.create_message(...)` 周围局部抑制该具体告警。
+- modern MRTR 返回到 client 的 `request_state` 会由 SDK 签名封装，不会保留服务器给出的明文；测试应验证受保护 token 与成功重试，不冻结明文状态。
+- MCP 2.0.0 只在请求携带 `requestState` 时执行 state 解封；工具不得仅凭 `input_responses` 信任客户端结果。解析 modern response 前必须确认 FastMCP 暴露的 `ctx.request_state` 等于服务器原始 state，否则攻击者可省略 state 并注入伪造 `CreateMessageResult`。
+- Pydantic v2 默认忽略额外字段，`min_length=1` 也接受纯空白字符串；Sampling 输出 envelope 需要 `extra="forbid"` 和 strip 后的长度约束，才能保证只接受精确且有意义的 `{answer: short text}`。
+- 双协议分流不能只看 protocol version：在合法 MRTR resume response/state 处理之后、构建新请求之前，必须检查公开的 `ctx.session.client_capabilities.sampling`。缺失时直接返回精确 `unsupported_capability`，否则 modern 会产生无法驱动的 `InputRequiredResult`，legacy 会发出无能力的 `create_message` 并被错误掩码。
+- MRTR continuation 必须是严格状态机：仅 `input_responses is None and request_state is None` 是首轮；任一 continuation 字段存在时，state 必须匹配原始 plaintext、response keys 必须精确为 `answer` 且值必须是 `CreateMessageResult`。state-only、response-only、额外 key 或错误类型都要立即拒绝，不能重发 Sampling。
+- `warnings.catch_warnings()` 跨 `await` 时不仅会覆盖嵌套 client handler，并发 legacy 调用还会因非 LIFO 退出污染进程级 `warnings.filters`。fixed pin 的 `typing_extensions.deprecated` 在调用 async wrapper 时同步发告警，因此过滤 scope 内只创建 `pending = create_message(...)`，退出 scope 后再 `await pending`；同时精确匹配 SDK message/module。
+- 聚合 runner 不能假设 worker 或初始化步骤只会返回结构化结果：offloaded 同步 probe 必须用 `fail_after` + `abandon_on_cancel=True` 防止阻塞事件循环，并将 timeout/普通 Exception 归一化为各 probe 原始名称的 required FAIL；workspace/runtime 普通异常也要进入报告，但 KeyboardInterrupt/SystemExit 等 BaseException 必须传播。
+- `.gitignore` 安全测试不能只匹配文本：必须对目录内哨兵路径运行 `git check-ignore --quiet --no-index` 验证 Git 最终规则，并用临时仓库中的后置 negation 证明检查会失败；制品泄漏应由精确 archive 成员集合和成员类型保证，不能依赖 `.gitignore` 内容的脆弱子串禁令。
+- 交换同尺寸视觉 artifact 后，不能根据并行 Read 的无标签返回顺序或旧 hash 推断语义。必须对每个最终固定路径分别、顺序 Read 目视确认，再派 fresh read-only agent 读取同一最终路径；只有两次路径级确认一致后才能写 hash-bound semantic review。
+- 用户要求尽快交付成品时，不得继续把时间投入兼容性边角加固、测试扩张或多轮审阅；应冻结已知非阻塞问题，快速结束规格并优先实现可运行的生产纵向切片。**Why:** 过度优化 Slice 0 的测试与证据延迟了真实图能力。**How to apply:** 只做阻塞生产实现的最小检查，不新增测试工程，不启动审阅循环，先交付 `src/noa/domain/` 与可调用产品入口。
+- 验证必须分层：日常任务只跑开发门（Ruff、`mypy src`、当前切片测试、import smoke）；故障注入、安全矩阵、规模预算、宿主证据、可复现构建等发布门条目只在 release 前集中执行，不得写进任何切片的完成定义。**Why:** 把发布级验证一刀切压到每个切片，导致无法敏捷推进（2026-08-22 主人纠正）。**How to apply:** 定义任务验收前先对照 `memory/verify.md` 分层；发现把发布门条目写进开发任务的计划时，当场移到发布门。
+- 多状态 join 函数不要混用布尔与字符串哨兵：`_entity_join_state` 曾返回 `"current"` 字符串而循环用 `state is True` 判断，导致 Evidence 永不加入 current set。统一返回 `True | "tombstoned" | "pending"` 并在分支内先归一化。
+- 出处时间链顺序固定为 `retrieved_at <= accepted_at <= asserted_at/retracted_at/confirmed_at`：adapter 构造 proposal 时必须给独立 `asserted_at` 参数（取 max(retrieved, accepted)），不能直接复用 retrieved_at，否则 `create_source_write_batch` 两次 time-invalid。
+- urllib 的 `response.headers` 是 HTTPMessage 属性不是方法；自建测试 double 必须用 property 保持同一调用形状，或读取处统一走 `.get()`。
+- 审批摘要必须等于 **domain binding 摘要**（ClaimReviewBinding/SemanticRelationReviewBinding/FuzzyMergeReviewBinding），不是候选 JSON 的哈希——domain confirm_* 只认 binding 摘要，两套摘要会在 approve 时 fail closed。
+- `semantic_supported_by` 结构边的 subject 是 **SemanticRelation 自身 ID**（canonical direction: Relation → EvidencePassage），投影时不能误用 relation.subject_id 当 subject。
+- 反复跑 `ruff --unsafe-fixes` 会把"当时未用、稍后代码才引用"的导入删掉：分步编辑时最后一次性补导入，之后只 format 不 fix。
+- 每次改动包级 `__init__.py` 导出后必须跑 `python -c "import noa.domain as m; missing=[n for n in m.__all__ if not hasattr(m,n)]; assert not missing"`：ruff 的 isort/RUF022 自动修复曾悄悄丢掉 `ResearchTask` 导入，而 pytest 全绿（测试只 import 子模块）掩盖了它。
+- mypy strict 下收窄 typed-ID 联合必须用 `isinstance(x, T)`：`type(x) is T` 与 tuple 成员判断在 else 分支不可靠地剔除联合成员。以 `TypedId` 对象为键的 mapping 只能用 ID 对象做 `in`/`.get()`；拿 `.text` 字符串查会触发 comparison-overlap 且语义错误。
+- `tests/compat/` 曾有的三处失败已于 2026-08-22 修复：test_app 补 `from fastmcp.apps import ResourceCSP`、test_packaging allowlist 收录 Slice 1 文件并加 `uuid6==2025.0.1` 依赖 pin、test_runner 的 `mcp-app-resource.details` 期望补三个新 key。全量 pytest 应回到绿色；若变红按真实回归排查，不要再当已知红跳过。

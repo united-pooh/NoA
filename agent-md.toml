@@ -1,0 +1,5 @@
+[verify]
+typecheck = "uv run mypy src"
+lint = "uv run ruff check . && uv run ruff format --check ."
+test = "uv run pytest"
+lint_file = "uv run ruff check {file}"
