@@ -40,7 +40,18 @@ class RunStage(StrEnum):
     CANCELLED = "cancelled"
 
 
+class TrajectoryRunStatus(StrEnum):
+    ACTIVE = "active"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    ABANDONED = "abandoned"
+    LEGACY_UNKNOWN = "legacy_unknown"
+
+
 _ACTIVE_STAGES = frozenset(RunStage) - {RunStage.COMPLETED, RunStage.CANCELLED}
+_TERMINAL_TRAJECTORY_STATUSES = frozenset(
+    {TrajectoryRunStatus.COMPLETED, TrajectoryRunStatus.ABANDONED}
+)
 
 _RUN_SCHEMA = """
 CREATE TABLE IF NOT EXISTS research_runs (
@@ -52,6 +63,7 @@ CREATE TABLE IF NOT EXISTS research_runs (
     total_steps INTEGER NOT NULL CHECK (total_steps > 0),
     sampling_requests INTEGER NOT NULL DEFAULT 0,
     max_sampling_requests INTEGER NOT NULL,
+    trajectory_status TEXT NOT NULL DEFAULT 'legacy_unknown',
     payload TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -68,6 +80,7 @@ class ResearchRun:
     sampling_requests: int
     max_sampling_requests: int
     payload: dict[str, object]
+    trajectory_status: TrajectoryRunStatus = TrajectoryRunStatus.LEGACY_UNKNOWN
 
 
 class ResearchRunStore:
@@ -76,6 +89,14 @@ class ResearchRunStore:
         self._connection = sqlite3.connect(database_path, isolation_level=None)
         self._connection.execute("PRAGMA journal_mode=WAL")
         self._connection.executescript(_RUN_SCHEMA)
+        columns = {
+            str(row[1]) for row in self._connection.execute("PRAGMA table_info(research_runs)")
+        }
+        if "trajectory_status" not in columns:
+            self._connection.execute(
+                "ALTER TABLE research_runs ADD COLUMN trajectory_status TEXT NOT NULL "
+                "DEFAULT 'legacy_unknown'"
+            )
 
     def close(self) -> None:
         self._connection.close()
@@ -96,8 +117,8 @@ class ResearchRunStore:
             now = _utc_now_text()
             self._connection.execute(
                 "INSERT INTO research_runs (run_id, stage, total_steps,"
-                " max_sampling_requests, payload, created_at, updated_at)"
-                " VALUES (?, 'prepared', ?, ?, ?, ?, ?)",
+                " max_sampling_requests, trajectory_status, payload, created_at, updated_at)"
+                " VALUES (?, 'prepared', ?, ?, 'active', ?, ?, ?)",
                 (
                     run_id,
                     total_steps,
@@ -118,7 +139,8 @@ class ResearchRunStore:
     def load_run(self, run_id: str) -> ResearchRun:
         row = self._connection.execute(
             "SELECT run_id, stage, current_step, total_steps, sampling_requests,"
-            " max_sampling_requests, payload FROM research_runs WHERE run_id = ?",
+            " max_sampling_requests, payload, trajectory_status"
+            " FROM research_runs WHERE run_id = ?",
             (run_id,),
         ).fetchone()
         if row is None:
@@ -133,6 +155,7 @@ class ResearchRunStore:
             sampling_requests=int(row[4]),
             max_sampling_requests=int(row[5]),
             payload=json.loads(row[6]),
+            trajectory_status=TrajectoryRunStatus(row[7]),
         )
 
     def advance(
@@ -144,7 +167,10 @@ class ResearchRunStore:
     ) -> ResearchRun:
 
         run = self.load_run(run_id)
-        if run.stage not in _ACTIVE_STAGES:
+        if (
+            run.stage not in _ACTIVE_STAGES
+            or run.trajectory_status in _TERMINAL_TRAJECTORY_STATUSES
+        ):
             raise _error(
                 "run_not_active",
                 f"Run {run_id!r} is {run.stage.value!r} and cannot advance",
@@ -155,13 +181,20 @@ class ResearchRunStore:
         if payload_delta:
             merged_payload.update(payload_delta)
         new_stage = stage if stage is not None else run.stage
+        new_trajectory_status = run.trajectory_status
+        if new_stage is RunStage.COMPLETED:
+            new_trajectory_status = TrajectoryRunStatus.COMPLETED
+        elif new_stage is RunStage.CANCELLED:
+            new_trajectory_status = TrajectoryRunStatus.ABANDONED
         self._connection.execute(
             "UPDATE research_runs SET stage = ?, current_step = ?, sampling_requests = ?,"
+            " trajectory_status = ?,"
             " payload = ?, updated_at = ? WHERE run_id = ?",
             (
                 new_stage.value,
                 next_step,
                 run.sampling_requests,
+                new_trajectory_status.value,
                 _json(merged_payload),
                 _utc_now_text(),
                 run_id,
@@ -171,6 +204,15 @@ class ResearchRunStore:
 
     def record_sampling(self, run_id: str) -> None:
         run = self.load_run(run_id)
+        if (
+            run.stage not in _ACTIVE_STAGES
+            or run.trajectory_status in _TERMINAL_TRAJECTORY_STATUSES
+        ):
+            raise _error(
+                "run_not_active",
+                f"Run {run_id!r} is terminal and cannot sample",
+                run_id=run_id,
+            )
         if run.sampling_requests >= run.max_sampling_requests:
             raise _error(
                 "sampling_budget_exhausted",
@@ -184,9 +226,50 @@ class ResearchRunStore:
         )
 
     def cancel(self, run_id: str) -> ResearchRun:
+        run = self.load_run(run_id)
+        if (
+            run.stage not in _ACTIVE_STAGES
+            or run.trajectory_status in _TERMINAL_TRAJECTORY_STATUSES
+        ):
+            raise _error(
+                "run_not_active",
+                f"Run {run_id!r} is terminal and cannot be cancelled",
+                run_id=run_id,
+            )
         self._connection.execute(
-            "UPDATE research_runs SET stage = 'cancelled', updated_at = ? WHERE run_id = ?",
+            "UPDATE research_runs SET stage = 'cancelled', trajectory_status = 'abandoned',"
+            " updated_at = ? WHERE run_id = ?",
             (_utc_now_text(), run_id),
+        )
+        return self.load_run(run_id)
+
+    def set_trajectory_status(self, run_id: str, status: TrajectoryRunStatus) -> ResearchRun:
+        run = self.load_run(run_id)
+        status = TrajectoryRunStatus(status)
+        allowed = {
+            TrajectoryRunStatus.ACTIVE: {
+                TrajectoryRunStatus.ACTIVE,
+                TrajectoryRunStatus.PAUSED,
+                TrajectoryRunStatus.COMPLETED,
+                TrajectoryRunStatus.ABANDONED,
+            },
+            TrajectoryRunStatus.PAUSED: {
+                TrajectoryRunStatus.ACTIVE,
+                TrajectoryRunStatus.PAUSED,
+                TrajectoryRunStatus.COMPLETED,
+                TrajectoryRunStatus.ABANDONED,
+            },
+        }
+        if status not in allowed.get(run.trajectory_status, set()):
+            raise _error(
+                "invalid_trajectory_transition",
+                f"Cannot transition trajectory status from {run.trajectory_status.value!r}"
+                f" to {status.value!r}",
+                run_id=run_id,
+            )
+        self._connection.execute(
+            "UPDATE research_runs SET trajectory_status = ?, updated_at = ? WHERE run_id = ?",
+            (status.value, _utc_now_text(), run_id),
         )
         return self.load_run(run_id)
 
@@ -222,4 +305,5 @@ __all__ = [
     "RunError",
     "RunStage",
     "SamplingRuntime",
+    "TrajectoryRunStatus",
 ]
