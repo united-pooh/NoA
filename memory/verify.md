@@ -31,6 +31,15 @@
 - `MYPYPATH=src .venv/bin/mypy src` — PASS (30 source files).
 - Runner lifecycle event kinds are allowlisted; next-step proposals return structured `continue`, prerequisite continuation, mainline return, checkpoint, human pause, or abandon decisions. The JoyAI fixture proves prerequisite release routes back to capability validation.
 
+## M6 Skill and product entry migration (2026-09-19)
+
+- `UV_CACHE_DIR=/private/tmp/noa-uv-cache .venv/bin/pytest tests/test_package_metadata.py tests/compat/test_packaging.py -k 'not built_distributions_are_reproducible_and_publishable' -q` — PASS (5 tests). The build-backed reproducibility test remains excluded here because the known PyPI network blocker is rechecked at M7.
+- `UV_CACHE_DIR=/private/tmp/noa-uv-cache .venv/bin/ruff check .` — PASS.
+- `UV_CACHE_DIR=/private/tmp/noa-uv-cache .venv/bin/ruff format --check .` — PASS.
+- `UV_CACHE_DIR=/private/tmp/noa-uv-cache .venv/bin/mypy src` — PASS (30 source files).
+- `git diff --check` — PASS.
+- README, SKILL, package README, and `agents/openai.yaml` now map legacy evidence/decision/next-step records to MCP trajectory events. Markdown is import/export only; the MCP kernel is the active runtime authority; incomplete legacy runs remain `legacy_unknown` without synthetic timestamps, parents, branches, or completion evidence. The package allowlist includes the trajectory modules and tests, and no budget ledger was added.
+
 ## 笔记查询链路打通（2026-08-24）
 
 TDD 新增 3 项回归（`test_note_attachments_survive_round_trip_and_project`、`test_get_note_returns_attachments_with_kinds`、`test_export_graph_view_writes_readable_json`）：

@@ -1,6 +1,6 @@
 # NoA（生盐诺亚）
 
-一个面向 Codex 的研究日志 skill：把实验笔记、代码改动、运行结果和失败路径整理成可复现、可追踪、可决策的研究记录。
+一个面向 Codex 的研究轨迹 MCP kernel 与研究日志 skill：把实验笔记、代码改动、运行结果和失败路径整理成可复现、可追踪、可决策的研究记录。
 
 NoA 不负责美化结果，也不是逐分钟流水账。它持续追问：
 
@@ -31,6 +31,21 @@ NoA 使用的研究闭环是：
 → 采用、回退或继续验证
 → 可迁移经验与下一步
 ```
+
+## 轨迹控制 kernel
+
+研究过程的运行权威源是 MCP trajectory kernel。它为每个研究目标保留版本、成功标准、依赖关系、分支和 append-only 事件，并从事件重放出进度、证据范围、阻塞项、偏离程度和下一步闸门。`get_research_snapshot` 返回当前状态，`get_research_trajectory` 返回可重放事件；`propose_next_research_step` 在继续工作前检查是否应该回到能力主线、暂停复核或放弃分支。
+
+旧的 Markdown 研究日志仍然是面向人的导入/导出格式，不是运行时事实源。迁移时按下面的语义映射追加事件，并保留无法证明的字段：
+
+| 旧 Skill 记录 | trajectory event | 迁移规则 |
+| --- | --- | --- |
+| evidence layer 中的命令、配置、run、指标和产物 | `observation_recorded`；有实验生命周期时再加 `experiment_started` / `experiment_finished` | 将可核验事实放入 `result`、`metrics`、`artifacts`，声明 `evidence_scope` 和 `evidence_status` |
+| hypothesis、比较、解释、权衡和决定 | `decision_recorded` | 关联目标 criterion、分支和支撑证据；解释仍标为解释，不升级为验证事实 |
+| next step、重试条件和失败路径 | `decision_recorded` 或带 `intent` 的事件 | 通过 `propose_next_research_step` 获得结构化闸门结果 |
+| 只有 Markdown 文本、缺少时间/父节点/分支的旧 run | 事件导入，缺失字段保持 `unknown`；run 标为 `legacy_unknown` | 禁止合成时间、parent、分支或完成证据 |
+
+导出日志时从 snapshot 和事件生成可读 Markdown；再次读取时以 MCP kernel 重放结果为准。这样可以保留原有研究叙事，同时避免在分支试错后丢失与最初目标的距离。
 
 ## 安装
 

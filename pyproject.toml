@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "noa-mcp"
 version = "0.1.0a0"
-description = "NoA literature graph MCP compatibility spike"
+description = "NoA provenance and research trajectory MCP kernel compatibility spike"
 readme = { file = "docs/package/README.md", content-type = "text/markdown" }
 requires-python = "==3.11.*"
 classifiers = ["Private :: Do Not Upload"]
@@ -45,6 +45,9 @@ packages = ["src/noa"]
 ignore-vcs = true
 include = [
   "/.gitignore",
+  "/README.md",
+  "/SKILL.md",
+  "/agents/openai.yaml",
   "/docs/package/README.md",
   "/pyproject.toml",
   "/src",

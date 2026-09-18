@@ -1,6 +1,6 @@
 ---
 name: noa
-description: Maintain evidence-driven, reproducible Markdown research and experiment logs from raw notes, code changes, commands, run outputs, metrics, and decisions. Use when the user invokes $noa, mentions NoA or 生盐诺亚, or asks to create, update, organize, summarize, or standardize a research log, experiment log, negative-result record, lab notebook, or research-process journal.
+description: Maintain evidence-driven, reproducible research trajectories and Markdown exports through the NoA MCP kernel. Use when the user invokes $noa, mentions NoA or 生盐诺亚, or asks to create, update, organize, summarize, or standardize a research log, experiment log, negative-result record, lab notebook, or research-process journal.
 ---
 
 # NoA（生盐诺亚）
@@ -10,6 +10,23 @@ Turn research activity into a durable decision record. Preserve the reasoning pa
 NoA is not a minute-by-minute diary and not a results-polishing assistant. Its central question is:
 
 > Is the evidence strong enough to change the current research or engineering decision?
+
+## Use the MCP trajectory kernel as the authority
+
+The MCP trajectory kernel is the only runtime authority for an active research process. Create or revise a versioned `ResearchObjective`, append immutable `TrajectoryEvent` values, and read `TrajectorySnapshot` before proposing the next step. Use the kernel tools `create_research_objective`, `revise_research_objective`, `start_research_run`, `append_trajectory_event`, `get_research_snapshot`, `get_research_trajectory`, and `propose_next_research_step` when they are available.
+
+Markdown is a human-readable import/export format. Do not treat an edited Markdown line as a state transition, and do not infer a parent event, branch, timestamp, evidence scope, or completion claim that the source does not contain. Imported pre-kernel runs stay `legacy_unknown` until new kernel events establish the missing facts; this label is an uncertainty marker, not a reason to fill in history.
+
+When migrating an existing NoA entry, use this mapping:
+
+| Existing record | Kernel event | Required treatment |
+| --- | --- | --- |
+| Evidence-layer command, configuration, run ID, metric, failure, or artifact | `observation_recorded`; add `experiment_started` / `experiment_finished` around a bounded experiment | Preserve source values in `result`, `metrics`, and `artifacts`; attach the declared `evidence_scope` and `evidence_status`. |
+| Decision-layer hypothesis, comparison, interpretation, trade-off, or decision | `decision_recorded` | Link the event to the relevant criterion and supporting event IDs. Keep interpretation separate from verified evidence. |
+| Next step, retry condition, blocker, or return criterion | decision event with `intent`, then `propose_next_research_step` | Let the deterministic gate return `continue`, `continue_prerequisite`, `return_to_capability_validation`, `checkpoint_review`, `pause_for_human`, or `abandon_branch`. |
+| Legacy Markdown without complete chronology or lineage | imported event(s) with unknown fields and `legacy_unknown` run status | Never synthesize elapsed time, parent, branch, or completion evidence. |
+
+Export the current snapshot and replayed events back to Markdown for review. The export is a view of the kernel and must not become a second source of truth.
 
 ## Work in two layers
 

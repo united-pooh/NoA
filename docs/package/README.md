@@ -1,6 +1,6 @@
 # NoA MCP
 
-NoA is a pre-alpha Python MCP server for building a provenance-preserving literature knowledge graph. This private package currently contains the Slice 0 compatibility gate rather than the full literature product and is not approved for public distribution.
+NoA is a pre-alpha Python MCP server for building a provenance-preserving literature knowledge graph and controlling research trajectories. This private package currently contains the Slice 0 compatibility gate and the trajectory-control kernel rather than the full literature product and is not approved for public distribution.
 
 ## Current scope
 
@@ -14,6 +14,8 @@ The compatibility gate verifies:
 - SQLite checkpoint recovery;
 - a bundled, network-free MCP App resource;
 - wheel installation and stdio execution.
+
+The trajectory-control kernel is the runtime authority for active research runs. It stores versioned objectives and append-only events, then rebuilds progress, evidence scope, branches, drift, blockers, and next-step guardrails through MCP tools. Existing Markdown research logs can be imported or exported as human-readable records; they do not override the kernel. Historical runs whose chronology or lineage cannot be proven remain `legacy_unknown` and are never backfilled with synthetic timestamps, parents, branches, or completion evidence.
 
 The full literature graph, source adapters, review workflow, search features, and production MCP App are not included yet.
 
