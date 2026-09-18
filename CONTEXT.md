@@ -24,6 +24,34 @@ _Avoid_: Diary, changelog
 A bounded, resumable NoA workflow for collection, import, enrichment, review, refresh, or synthesis.
 _Avoid_: Session, background job
 
+**Research objective**:
+An immutable, versioned statement of the capability being pursued, its success criteria, dependencies, and required evidence scopes.
+_Avoid_: Task prompt, current step
+
+**Trajectory event**:
+An append-only, ordered record of an observation, proposal, experiment, decision, branch, or state transition in a research run.
+_Avoid_: Log line, model message
+
+**Trajectory snapshot**:
+A rebuildable control-plane projection containing the current objective, branch, elapsed time, evidence-backed progress, drift, blockers, and next-step guardrail.
+_Avoid_: Cached answer, research summary
+
+**Root capability**:
+A success criterion describing the final user-facing research capability. Engineering prerequisites and requested optimizations cannot verify it unless their evidence meets its declared acceptance scope.
+_Avoid_: Implementation task, benchmark result
+
+**Prerequisite**:
+A bounded condition that enables or unblocks a root capability criterion and must declare the mainline criterion to return to after release.
+_Avoid_: Optional improvement, final result
+
+**Evidence scope**:
+The stage and measurement boundary of an observation, such as pilot, batch training, single-stream, visual Stage A, language Stage B, end-to-end, or formal evaluation.
+_Avoid_: Confidence, quality score
+
+**Trajectory drift**:
+The deterministic relationship between the current path and its objective, criteria, dependencies, common ancestor, and recent root-capability evidence.
+_Avoid_: Topic similarity, model intuition
+
 **Evidence packet**:
 The minimal, source-attributed subset of research evidence disclosed to a model for one decision step.
 _Avoid_: Context dump, prompt context
