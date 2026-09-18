@@ -78,6 +78,7 @@ from noa.trajectory import (
     WorkClass,
     WorkSource,
 )
+from noa.trajectory_guard import RUNNER_EVENT_KINDS, NextResearchStep, evaluate_next_step
 from noa.trajectory_store import TrajectoryStore
 from noa.views import NoteStore, SearchIndex, export_projection_view
 from noa.workspace import Workspace, WorkspaceError
@@ -1269,6 +1270,106 @@ def append_trajectory_event(
         return {"status": "pass", "event": _trajectory_event_json(persisted)}
     except Exception as error:
         return _trajectory_error(error, "append_trajectory_event_failed")
+
+
+@mcp.tool()
+def record_runner_event(
+    workspace_root: str,
+    objective_id: str,
+    run_id: str,
+    event_id: str,
+    event_kind: str,
+    idempotency_key: str,
+    branch_id: str = "main",
+    seq: int | None = None,
+    parent_event_id: str | None = None,
+    occurred_at: str | None = None,
+    started_at: str | None = None,
+    ended_at: str | None = None,
+    result: dict[str, object] | None = None,
+    metrics: dict[str, object] | None = None,
+    artifacts: list[str] | None = None,
+    outcome: str = "observed",
+    source: str = "runner",
+    supports_criterion_ids: list[str] | None = None,
+    blocked_criterion_ids: list[str] | None = None,
+    evidence_scope: str = EvidenceScope.PILOT.value,
+    evidence_status: str = EvidenceStatus.OBSERVED.value,
+    expected_seq: int | None = None,
+) -> dict[str, object]:
+    """Append one of the structured runner lifecycle events."""
+    if event_kind not in RUNNER_EVENT_KINDS:
+        return _error_result(
+            "invalid_runner_event", f"unsupported runner event kind {event_kind!r}"
+        )
+    return append_trajectory_event(
+        workspace_root=workspace_root,
+        objective_id=objective_id,
+        run_id=run_id,
+        event_id=event_id,
+        event_kind=event_kind,
+        idempotency_key=idempotency_key,
+        branch_id=branch_id,
+        seq=seq,
+        parent_event_id=parent_event_id,
+        occurred_at=occurred_at,
+        started_at=started_at,
+        ended_at=ended_at,
+        result=result,
+        metrics=metrics,
+        artifacts=artifacts,
+        outcome=outcome,
+        source=source,
+        supports_criterion_ids=supports_criterion_ids,
+        blocked_criterion_ids=blocked_criterion_ids,
+        evidence_scope=evidence_scope,
+        evidence_status=evidence_status,
+        expected_seq=expected_seq,
+    )
+
+
+@mcp.tool()
+def propose_next_research_step(
+    workspace_root: str,
+    objective_id: str,
+    hypothesis: str,
+    criterion_id: str,
+    work_class: str,
+    work_source: str,
+    blocker: str = "",
+    return_criterion_id: str = "",
+    exit_condition: str = "",
+    evidence_scope: str = EvidenceScope.PILOT.value,
+) -> dict[str, object]:
+    """Evaluate a runner proposal against the replayed trajectory guardrail."""
+    try:
+        store = TrajectoryStore(_trajectory_store_path(workspace_root))
+        try:
+            objective = store.load_objective(objective_id)
+            events = store.load_events(objective_id)
+            proposal = NextResearchStep(
+                hypothesis=hypothesis,
+                criterion_id=criterion_id,
+                work_class=WorkClass(work_class),
+                work_source=WorkSource(work_source),
+                blocker=blocker,
+                return_criterion_id=return_criterion_id,
+                exit_condition=exit_condition,
+                evidence_scope=EvidenceScope(evidence_scope),
+            )
+            decision = evaluate_next_step(objective, events, proposal)
+        finally:
+            store.close()
+        return {
+            "status": "pass",
+            "result": decision.result.value,
+            "reasons": list(decision.reasons),
+            "next_action": decision.next_action,
+            "validation_stagnation_events": decision.validation_stagnation_events,
+            "return_due": decision.return_due,
+        }
+    except Exception as error:
+        return _trajectory_error(error, "propose_next_step_failed")
 
 
 @mcp.tool()

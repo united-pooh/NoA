@@ -48,7 +48,8 @@
 - [x] NoA trajectory-control M2：实现纯领域模型、依赖校验、事件重放与确定性进度/偏离评估器 <!-- todo:trajectory-m2 -->
 - [x] NoA trajectory-control M3：SQLite append-only 事件源、WAL/快照重放、幂等/序列保护与旧运行 `legacy_unknown` 迁移 <!-- todo:trajectory-m3 -->
 - [x] NoA trajectory-control M4：提供目标/版本、事件、分支、快照与轨迹查询 MCP 工具，并验证重启重放一致性 <!-- todo:trajectory-m4 -->
-- [ ] NoA trajectory-control M5–M7：runner 闸门、旧 Skill 迁移与发布验收 <!-- todo:trajectory-m5-m7 -->
+- [x] NoA trajectory-control M5：接入 runner lifecycle events 与确定性下一步闸门，加入 JoyAI 前置解除回主线 fixture <!-- todo:trajectory-m5 -->
+- [ ] NoA trajectory-control M6–M7：旧 Skill 迁移与发布验收 <!-- todo:trajectory-m6-m7 -->
 - [x] 冻结 Slice 1 Domain Graph and Provenance 规格 <!-- todo:slice-1-domain-graph-spec -->
 - [x] 生成生产优先的 Slice 1 实施计划 <!-- todo:slice-1-domain-graph-plan -->
 - [x] 实现 `DomainError`、23 类 UUIDv7 ID 与精确 uuid6 pin <!-- todo:slice-1-domain-foundation -->

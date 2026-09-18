@@ -829,13 +829,12 @@ def evaluate_drift(
         )
     ]
     last_release_index = max(release_indexes, default=None)
-    if released_ids:
-        released_ids.update(
-            criterion_id
-            for index in release_indexes
-            for criterion_id in events[index].supports_criterion_ids
-            if criterion_id in prerequisite_ids
-        )
+    released_ids.update(
+        criterion_id
+        for index in release_indexes
+        for criterion_id in events[index].supports_criterion_ids
+        if criterion_id in prerequisite_ids
+    )
     release_targets = _context_string_set(dependency_context, "return_to_criterion_ids")
     if not release_targets:
         release_targets = {

@@ -23,6 +23,14 @@
 - `MYPYPATH=src .venv/bin/mypy src` — PASS (29 source files).
 - In-process MCP flow passes: create objective → start mainline → append event → fork → append child event → query snapshot/trajectory → close/reopen and obtain identical snapshot. No budgets were introduced.
 
+## M5 runner guardrails (2026-09-19)
+
+- `PYTHONPATH=src .venv/bin/pytest tests/test_trajectory.py tests/test_trajectory_store.py tests/test_trajectory_runtime.py tests/test_trajectory_guard.py tests/compat/test_trajectory_tools.py tests/compat/test_trajectory_guard_tools.py tests/compat/test_server.py -q` — PASS (33 tests).
+- `PYTHONPATH=src .venv/bin/pytest -q` — **798 passed, 1 failed**. The only failure remains the pre-existing reproducible-build check blocked by PyPI access.
+- `.venv/bin/ruff check . && .venv/bin/ruff format --check .` — PASS.
+- `MYPYPATH=src .venv/bin/mypy src` — PASS (30 source files).
+- Runner lifecycle event kinds are allowlisted; next-step proposals return structured `continue`, prerequisite continuation, mainline return, checkpoint, human pause, or abandon decisions. The JoyAI fixture proves prerequisite release routes back to capability validation.
+
 ## 笔记查询链路打通（2026-08-24）
 
 TDD 新增 3 项回归（`test_note_attachments_survive_round_trip_and_project`、`test_get_note_returns_attachments_with_kinds`、`test_export_graph_view_writes_readable_json`）：
